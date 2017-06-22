@@ -1,0 +1,8 @@
+- name: reset valid certificate
+  file:
+    path: "{{ item }}"
+    state: touch
+  changed_when: false
+  with_items:
+    - /tmp/valid_certificate.pem
+    - /tmp/valid_certificate.key

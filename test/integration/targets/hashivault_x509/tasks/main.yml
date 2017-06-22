@@ -1,0 +1,185 @@
+# test code for the hashivault_x509 module
+# (c) 2017, Colin Woodcock <colin.woodcock@gmail.com>
+
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+# used during dev to prevent the binary from being downloaded again
+- name: stat the binary
+  stat:
+    path: /usr/local/bin/vault
+  register: vault_bin
+  ignore_errors: true
+  tags: always
+
+- block:
+
+  - name: download vault
+    unarchive:
+      src: https://releases.hashicorp.com/vault/0.7.2/vault_0.7.2_linux_amd64.zip
+      dest: /usr/local/bin
+      remote_src: True
+
+  - name: start the vault server in dev mode
+    shell: "/usr/local/bin/vault server -dev -dev-root-token-id='{{ vault_token_id_root }}' &"
+
+  - name: wait for vault to start
+    wait_for:
+      port: 8200
+      delay: 2
+
+  when: vault_install and not vault_bin.stat.exists
+  tags: always
+
+# Before doing anything setup the environment
+- include_tasks: reset.yml
+  tags: always
+
+- block:
+
+  # Argument checks
+  - name: borks on invalid state
+    hashivault_x509:
+      state: blah
+    ignore_errors: true
+    register: invalid_state
+    
+  - assert: that="{{ invalid_state.failed }}"
+
+  - include_tasks: reset.yml
+
+- block:
+
+  - name: certificate is required
+    hashivault_x509:
+      state: present
+      key: somevalue
+    ignore_errors: true
+    register: certificate_argument_required
+    
+  - assert: that="{{ certificate_argument_required.failed }}"
+
+  - include_tasks: reset.yml
+  
+- block:
+
+  - name: key is required
+    hashivault_x509:
+      state: present
+      certificate: somevalue
+    ignore_errors: true
+    register: key_argument_required
+    
+  - assert: that="{{ key_argument_required.failed }}"
+
+  - include_tasks: reset.yml
+
+- block:
+
+  - name: state present - does not issue when certificate and key are present and cert is valid
+    hashivault_x509:
+      state: present
+      certificate: /tmp/valid_certificate.pem
+      key: /tmp/valid_certificate.key
+    register: state_present_no_issue_with_valid
+    
+  - assert: that="{{ not state_present_no_issue_with_valid.changed }}"
+
+  - include_tasks: reset.yml
+
+- block:
+
+  - name: state present - missing certificate but present key should issue
+    hashivault_x509:
+      state: present
+      certificate: /tmp/missing_certificate.pem
+      key: /tmp/valid_certificate.key
+    register: issue_on_missing_cert
+    
+  - include_tasks: reset.yml
+
+  - assert: that="{{ issue_on_missing_cert.changed }}"
+
+- block:
+
+  - name: absent with absent cert and key should not change
+    hashivault_x509:
+      state: absent
+      certificate: /tmp/missing_certificate.pem 
+      key: /tmp/missing_certificate.key
+    register: state_absent_absent_cert_and_key
+    
+  - assert: that="{{ not state_absent_absent_cert_and_key.changed }}"
+    
+- block:
+
+  - name: state absent - absent cert and present key should delete key
+    hashivault_x509:
+      state: absent
+      certificate: /tmp/missing_certificate.pem 
+      key: /tmp/valid_certificate.key
+    register: state_absent_with_absent_cert_present_key_deletes_key
+    
+  - stat: path="/tmp/valid_certificate.key"
+    register: valid_cert
+    
+  - assert:
+      that:
+        - state_absent_with_absent_cert_present_key_deletes_key.changed
+        - not valid_cert.stat.exists
+        
+  - include_tasks: reset.yml
+
+- block:
+
+  - name: state absent - absent cert and present key should delete key
+    hashivault_x509:
+      state: absent
+      certificate: /tmp/missing_certificate.pem 
+      key: /tmp/valid_certificate.key
+    register: state_absent_with_present_cert_absent_key_deletes_cert
+
+  - stat: path="/tmp/valid_certificate.key"
+    register: s_certificate
+
+  - assert:
+      that:
+        - state_absent_with_present_cert_absent_key_deletes_cert.changed
+        - not s_certificate.stat.exists
+
+  - include_tasks: reset.yml
+
+- block:
+
+  - name: state absent - present cert and key deletes both
+    hashivault_x509:
+      state: absent
+      certificate: /tmp/valid_certificate.pem 
+      key: /tmp/valid_certificate.key
+    register: state_absent_with_present_cert_and_key_deletes_both
+
+  - stat: path="/tmp/valid_certificate.pem"
+    register: s_certificate
+
+  - stat: path="/tmp/valid_certificate.key"
+    register: s_key
+
+  - assert:
+      that:
+        - state_absent_with_present_cert_and_key_deletes_both.changed
+        - not s_certificate.stat.exists
+        - not s_key.stat.exists
+
+  - include_tasks: reset.yml

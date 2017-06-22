@@ -1,0 +1,3 @@
+vault_token_id_root: abdce
+vault_addr: http://127.0.0.1:8200
+vault_install: false
